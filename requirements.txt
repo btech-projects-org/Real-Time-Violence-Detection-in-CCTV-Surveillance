@@ -1,0 +1,23 @@
+# Core Backend Framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# Database
+motor==3.6.0
+pymongo>=4.9,<4.10
+
+# Computer Vision
+opencv-python==4.10.0.84
+
+# Google Generative AI
+google-generativeai==0.8.3
+
+# Environment Configuration
+python-dotenv==1.0.1
+
+# WebSocket support (included with uvicorn[standard])
+websockets==14.1
+
+# Additional dependencies
+aiofiles==24.1.0
+python-multipart==0.0.20
