@@ -1,5 +1,5 @@
 import asyncio
-from database import init_db, get_incidents
+from .database import init_db, get_incidents
 
 async def main():
     await init_db()

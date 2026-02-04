@@ -6,11 +6,15 @@ uvicorn[standard]==0.34.0
 motor==3.6.0
 pymongo>=4.9,<4.10
 
-# Computer Vision
+# Computer Vision & AI
 opencv-python==4.10.0.84
-
-# Google Generative AI
-google-generativeai==0.8.3
+ultralytics>=8.0.0  # YOLOv8 for weapon detection
+transformers>=4.30.0  # DETR for weapon detection
+Pillow>=9.0.0  # Image processing
+timm>=0.6.0  # Required for DETR
+torch>=2.0.0  # PyTorch for CNN-LSTM models
+torchvision>=0.15.0  # Pre-trained vision models for CNN-LSTM
+numpy>=1.24.0  # Array processing for video frame buffering
 
 # Environment Configuration
 python-dotenv==1.0.1

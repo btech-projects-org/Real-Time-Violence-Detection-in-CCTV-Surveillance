@@ -1,0 +1,27 @@
+# Environment files
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+
+# Cache
+.cache/
+
+# Alerts / generated images
+alerts/
+backend/alerts/
+
+# Weights / models
+backend/weights/
+
+# Test data
+test_images/
+test_videos/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,472 +1,266 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import LiveMonitor from './LiveMonitor';
+import IncidentHistory from './IncidentHistory';
+import AnalyticsDashboard from './AnalyticsDashboard';
 
-export default function Dashboard() {
-  const [incidents, setIncidents] = useState([]);
-  const [connected, setConnected] = useState(false);
-  const [cameraActive, setCameraActive] = useState(false);
-  const [cameraError, setCameraError] = useState('');
+const Dashboard = () => {
+  const [activeView, setActiveView] = useState('live'); // 'live', 'incidents', 'analytics'
   const [cameras, setCameras] = useState([]);
   const [selectedCamera, setSelectedCamera] = useState('');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
+  const [incidents, setIncidents] = useState([]);
+  const [isCameraActive, setIsCameraActive] = useState(false); // Fix: State for UI update
+  
+  // Refs
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const wsRef = useRef(null);
-  const canvasRef = useRef(null);
-  const analysisIntervalRef = useRef(null);
 
-  // Get available cameras
-  const getCameras = async () => {
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter(device => device.kind === 'videoinput');
-      console.log('Available cameras:', videoDevices);
-      setCameras(videoDevices);
-      
-      // Auto-select first camera (usually laptop camera)
-      if (videoDevices.length > 0) {
-        setSelectedCamera(videoDevices[0].deviceId);
-        console.log('Auto-selected camera:', videoDevices[0].label);
-      }
-    } catch (err) {
-      console.error('Error enumerating cameras:', err);
-    }
-  };
-
-  // Stop camera
-  const stopCamera = () => {
-    console.log('Stopping camera...');
-    
-    // Stop frame analysis
-    if (analysisIntervalRef.current) {
-      clearInterval(analysisIntervalRef.current);
-      analysisIntervalRef.current = null;
-      console.log('Stopped frame analysis');
-    }
-    
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => {
-        track.stop();
-        console.log('Stopped track:', track.label);
-      });
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    setCameraActive(false);
-    setCameraError('');
-    console.log('✅ Camera stopped');
-  };
-
-  // Send frame to backend for analysis
-  const sendFrameForAnalysis = async () => {
-    // Check if video element and stream exist (don't rely on state due to closure)
-    if (!videoRef.current || !streamRef.current) {
-      console.log('⚠️ Skipping frame analysis - camera not active');
-      return;
-    }
-    
-    const video = videoRef.current;
-    
-    // Check if video is ready
-    if (video.videoWidth === 0 || video.videoHeight === 0 || video.readyState < 2) {
-      console.log('⚠️ Video not ready yet, skipping this frame');
-      return;
-    }
-    
-    try {
-      console.log('📸 Capturing frame for analysis...');
-      
-      // Create canvas to capture frame
-      if (!canvasRef.current) {
-        canvasRef.current = document.createElement('canvas');
-      }
-      
-      const canvas = canvasRef.current;
-      
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(video, 0, 0);
-      
-      console.log(`✅ Frame captured: ${canvas.width}x${canvas.height}`);
-      
-      // Convert to blob
-      canvas.toBlob(async (blob) => {
-        if (!blob) {
-          console.error('❌ Failed to create blob from canvas');
-          return;
-        }
-        
-        console.log(`📤 Sending frame to backend (${(blob.size / 1024).toFixed(2)} KB)...`);
-        
-        const formData = new FormData();
-        formData.append('file', blob, 'frame.jpg');
-        
-        try {
-          // Send to backend
-          const response = await fetch('http://localhost:8000/analyze-frame', {
-            method: 'POST',
-            body: formData
-          });
-          
-          if (!response.ok) {
-            console.error(`❌ Backend error: ${response.status} ${response.statusText}`);
-            return;
-          }
-          
-          const result = await response.json();
-          
-          console.log('📊 Analysis result:', result);
-          
-          if (result.detected) {
-            console.log('🚨 THREAT DETECTED:', result.type);
-            console.log('   Confidence:', (result.confidence * 100).toFixed(1) + '%');
-            console.log('   Description:', result.description);
-            if (result.angry_face) console.log('   😡 Angry face detected!');
-            if (result.weapon) console.log('   🔫 Weapon detected!');
-          } else {
-            console.log('✅ No threats - normal activity');
-          }
-        } catch (fetchErr) {
-          console.error('❌ Network error sending frame:', fetchErr);
-        }
-      }, 'image/jpeg', 0.8);
-      
-    } catch (err) {
-      console.error('❌ Error in sendFrameForAnalysis:', err);
-    }
-  };
-
-  // Start camera with low resolution fallback
-  const startCameraLowRes = async () => {
-    try {
-      console.log('Trying lower resolution...');
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 }
-        },
-        audio: false
-      });
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        streamRef.current = stream;
-        setCameraActive(true);
-        setCameraError('');
-        console.log('✅ Camera started with lower resolution');
-        
-        // Start sending frames for analysis every 3 seconds
-        analysisIntervalRef.current = setInterval(sendFrameForAnalysis, 3000);
-        console.log('Started frame analysis (every 3 seconds)');
-      }
-    } catch (err) {
-      console.error('❌ Low resolution camera error:', err);
-      let errorMessage = 'Failed to start camera: ' + err.message;
-      
-      if (err.name === 'NotReadableError') {
-        errorMessage = 'Camera is being used by another application.\n\nPlease close:\n• Microsoft Teams\n• Zoom\n• Skype\n• Discord (if video enabled)\n• Other browser tabs using camera\n• Windows Camera app\n• OBS Studio\n\nThen refresh this page.';
-      }
-      
-      setCameraError(errorMessage);
-      setCameraActive(false);
-    }
-  };
-
-  // Start camera
-  const startCamera = async () => {
-    try {
-      console.log('Starting camera...');
-      setCameraError('');
-
-      // Get available cameras first
-      await getCameras();
-
-      // Stop existing stream if any
-      if (streamRef.current) {
-        stopCamera();
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-
-      console.log('Requesting camera access...');
-      
-      const constraints = {
-        video: selectedCamera 
-          ? { deviceId: { exact: selectedCamera } }
-          : { 
-              facingMode: 'user',
-              width: { ideal: 1280 },
-              height: { ideal: 720 }
-            },
-        audio: false
-      };
-
-      console.log('Camera constraints:', constraints);
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      
-      const videoTrack = stream.getVideoTracks()[0];
-      console.log('📹 Camera started:', {
-        label: videoTrack.label,
-        id: videoTrack.id,
-        settings: videoTrack.getSettings()
-      });
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        streamRef.current = stream;
-        setCameraActive(true);
-        setCameraError('');
-        console.log('✅ Laptop camera started successfully!');
-        
-        // Start sending frames for analysis every 3 seconds
-        analysisIntervalRef.current = setInterval(sendFrameForAnalysis, 3000);
-        console.log('Started frame analysis (every 3 seconds)');
-      }
-    } catch (err) {
-      console.error('❌ Camera error:', err);
-      
-      if (err.name === 'OverconstrainedError') {
-        console.log('Constraints not supported, trying fallback...');
-        await startCameraLowRes();
-      } else {
-        let errorMessage = 'Failed to start camera: ' + err.message;
-        
-        if (err.name === 'NotReadableError') {
-          errorMessage = 'Camera is being used by another application.\n\nPlease close:\n• Microsoft Teams\n• Zoom\n• Skype\n• Discord (if video enabled)\n• Other browser tabs using camera\n• Windows Camera app\n• OBS Studio\n\nThen refresh this page.';
-        } else if (err.name === 'NotFoundError') {
-          errorMessage = 'No camera found on this device.';
-        } else if (err.name === 'NotAllowedError') {
-          errorMessage = 'Camera permission denied. Please allow camera access.';
-        }
-        
-        setCameraError(errorMessage);
-        setCameraActive(false);
-      }
-    }
-  };
-
-  // Toggle camera
-  const toggleCamera = () => {
-    console.log('Toggle camera clicked. Current state:', cameraActive);
-    if (cameraActive) {
-      stopCamera();
-    } else {
-      startCamera();
-    }
-  };
-
-  // Connect to WebSocket
-  const connectWebSocket = () => {
-    console.log('Connecting to WebSocket...');
-    const ws = new WebSocket('ws://localhost:8000/ws');
-    
-    ws.onopen = () => {
-      console.log('✅ WebSocket connected');
-      setConnected(true);
-    };
-    
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log('📨 Alert received:', data);
-      setIncidents(prev => [data, ...prev].slice(0, 10));
-    };
-    
-    ws.onerror = (error) => {
-      console.error('❌ WebSocket error:', error);
-      setConnected(false);
-    };
-    
-    ws.onclose = () => {
-      console.log('WebSocket disconnected, reconnecting in 5s...');
-      setConnected(false);
-      setTimeout(connectWebSocket, 5000);
-    };
-    
-    wsRef.current = ws;
-  };
-
-  // Initialize on mount
+  // 1. Camera Logic
   useEffect(() => {
-    connectWebSocket();
+    async function getCameras() {
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoDevices = devices.filter(d => d.kind === 'videoinput');
+            setCameras(videoDevices);
+            if(videoDevices.length) setSelectedCamera(videoDevices[0].deviceId);
+        } catch(e) { console.error(e); }
+    }
     getCameras();
-    
+
     return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-      stopCamera();
-    };
+        if(streamRef.current) stopCamera();
+    }
   }, []);
 
+  // Fix: Attach stream to video element AFTER it mounts (when isCameraActive becomes true)
+  useEffect(() => {
+    if (isCameraActive && videoRef.current && streamRef.current) {
+        videoRef.current.srcObject = streamRef.current;
+    }
+  }, [isCameraActive]);
+
+  // 2. WebSocket Logic
+  useEffect(() => {
+    let ws = null;
+    let reconnectTimeout = null;
+    let isMounted = true;
+
+    const connectWS = () => {
+        if (!isMounted) return;
+        
+        ws = new WebSocket('ws://localhost:8000/ws');
+        
+        ws.onopen = () => {
+            console.log("WS Connected");
+        };
+
+        ws.onmessage = (event) => {
+            if (!isMounted) return;
+            try {
+                const data = JSON.parse(event.data);
+                const newIncident = { ...data, timestamp: new Date() };
+                setIncidents(prev => [newIncident, ...prev].slice(0, 50));
+            } catch (e) { console.error("WS Parse Error", e); }
+        };
+
+        ws.onclose = () => {
+            if (isMounted) {
+                console.log("WS Closed. Reconnecting...");
+                reconnectTimeout = setTimeout(connectWS, 3000);
+            }
+        };
+
+        ws.onError = (err) => {
+            console.error("WS Error", err);
+            if(ws) ws.close();
+        };
+
+        wsRef.current = ws;
+    };
+
+    connectWS();
+
+    return () => {
+        isMounted = false;
+        if (reconnectTimeout) clearTimeout(reconnectTimeout);
+        if (ws) {
+            ws.onclose = null; // Prevent reconnect trigger
+            
+            // Fix: Check state to prevent "WebSocket is closed before the connection is established" warning
+            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+                ws.close();
+            }
+        }
+    }
+  }, []);
+
+  const startCamera = async () => {
+    if (streamRef.current) stopCamera();
+    try {
+        const constraints = { video: selectedCamera ? { deviceId: { exact: selectedCamera } } : true };
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        streamRef.current = stream;
+        if(videoRef.current) videoRef.current.srcObject = stream;
+        setIsCameraActive(true); // Trigger re-render
+    } catch(err) {
+        console.error("Camera Error", err);
+    }
+  };
+
+  const stopCamera = () => {
+      if(streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+      if(videoRef.current) videoRef.current.srcObject = null;
+      setIsCameraActive(false); // Trigger re-render
+  };
+
+  // Nav Item Helper
+  const NavItem = ({ id, icon, label }) => {
+      const isActive = activeView === id;
+      return (
+          <button 
+            onClick={() => setActiveView(id)}
+            className={`w-full flex items-center gap-4 px-3 py-3 rounded-xl transition-all duration-300 group relative overflow-hidden ${
+                isActive 
+                ? 'bg-gradient-to-r from-brand-600 to-brand-700 text-white shadow-[0_0_20px_rgba(59,130,246,0.5)] border border-brand-500/50' 
+                : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
+            }`}
+            title={isSidebarCollapsed ? label : ''}
+          >
+              {/* Glow Effect for active item */}
+              {isActive && <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent skew-x-12 animate-shimmer"></div>}
+              
+              <span className={`material-symbols-outlined text-[24px] z-10 ${isActive ? 'text-white' : 'text-slate-500 group-hover:text-white transition-colors'}`}>{icon}</span>
+              
+              {!isSidebarCollapsed && (
+                  <span className="text-sm font-medium tracking-wide z-10 whitespace-nowrap opacity-0 animate-fade-in-right" style={{animationFillMode: 'forwards'}}>
+                      {label}
+                  </span>
+              )}
+          </button>
+      );
+  }
+
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#0f172a', color: '#e2e8f0', fontFamily: 'system-ui' }}>
-      {/* Header */}
-      <div style={{ backgroundColor: '#1e293b', padding: '1rem 1.5rem', borderBottom: '1px solid #334155' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', maxWidth: '1400px', margin: '0 auto' }}>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#f1f5f9' }}>🎥 Laptop Camera - Violence Detection</h1>
-          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.875rem' }}>
-              WebSocket: {connected ? <span style={{ color: '#22c55e' }}>● Connected</span> : <span style={{ color: '#ef4444' }}>● Disconnected</span>}
-            </span>
-          </div>
-        </div>
-      </div>
+    <div className="flex h-screen w-screen bg-[#05070a] text-slate-200 overflow-hidden font-sans selection:bg-brand-500 selection:text-white relative">
+      
+      {/* Background Gradients */}
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_var(--tw-gradient-stops))] from-surface-900 via-[#05070a] to-black pointer-events-none"></div>
+      <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-brand-900/10 blur-[120px] rounded-full pointer-events-none mix-blend-screen"></div>
 
-      {/* Main Content */}
-      <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '2rem 1.5rem' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
-          
-          {/* Left Column - Camera */}
-          <div>
-            <div style={{ backgroundColor: '#1e293b', borderRadius: '0.5rem', padding: '1.5rem', border: '1px solid #334155' }}>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '1rem' }}>Live Camera Feed</h2>
-              
-              {/* Camera Selector */}
-              {cameras.length > 1 && (
-                <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem', color: '#94a3b8' }}>
-                    Select Camera:
-                  </label>
-                  <select 
-                    value={selectedCamera}
-                    onChange={(e) => setSelectedCamera(e.target.value)}
-                    style={{ 
-                      width: '100%', 
-                      padding: '0.5rem', 
-                      backgroundColor: '#0f172a', 
-                      color: '#e2e8f0', 
-                      border: '1px solid #334155', 
-                      borderRadius: '0.375rem',
-                      fontSize: '0.875rem'
-                    }}
-                  >
-                    {cameras.map((camera, index) => (
-                      <option key={camera.deviceId} value={camera.deviceId}>
-                        {camera.label || `Camera ${index + 1}`}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              
-              {/* Video Element */}
-              <div style={{ position: 'relative', backgroundColor: '#000', borderRadius: '0.375rem', overflow: 'hidden', marginBottom: '1rem' }}>
-                <video 
-                  ref={videoRef}
-                  autoPlay 
-                  playsInline
-                  muted
-                  style={{ 
-                    width: '100%', 
-                    height: 'auto', 
-                    display: 'block',
-                    minHeight: '400px',
-                    objectFit: 'contain'
-                  }}
-                />
-                {!cameraActive && (
-                  <div style={{ 
-                    position: 'absolute', 
-                    top: 0, 
-                    left: 0, 
-                    right: 0, 
-                    bottom: 0, 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center',
-                    color: '#64748b',
-                    fontSize: '1rem'
-                  }}>
-                    Camera inactive
-                  </div>
-                )}
-              </div>
-
-              {/* Camera Control Button */}
-              <button
-                onClick={toggleCamera}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem 1.5rem',
-                  backgroundColor: cameraActive ? '#dc2626' : '#22c55e',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '0.375rem',
-                  fontSize: '1rem',
-                  fontWeight: '600',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
-                }}
-                onMouseOver={(e) => e.target.style.opacity = '0.9'}
-                onMouseOut={(e) => e.target.style.opacity = '1'}
-              >
-                {cameraActive ? '⏸ Stop Camera' : '▶ Start Camera'}
-              </button>
-
-              {/* Error Display */}
-              {cameraError && (
-                <div style={{ 
-                  marginTop: '1rem', 
-                  padding: '1rem', 
-                  backgroundColor: '#7f1d1d', 
-                  border: '1px solid #991b1b', 
-                  borderRadius: '0.375rem',
-                  fontSize: '0.875rem',
-                  whiteSpace: 'pre-line',
-                  lineHeight: '1.6'
-                }}>
-                  <strong>⚠️ Error:</strong><br />
-                  {cameraError}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Right Column - Alerts */}
-          <div>
-            <div style={{ backgroundColor: '#1e293b', borderRadius: '0.5rem', padding: '1.5rem', border: '1px solid #334155' }}>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '1rem' }}>Recent Alerts</h2>
-              
-              {incidents.length === 0 ? (
-                <p style={{ color: '#64748b', fontSize: '0.875rem' }}>No alerts yet. System monitoring...</p>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  {incidents.map((incident, index) => (
-                    <div 
-                      key={index}
-                      style={{ 
-                        padding: '1rem', 
-                        backgroundColor: '#0f172a', 
-                        border: '1px solid #334155', 
-                        borderRadius: '0.375rem',
-                        borderLeft: '3px solid #ef4444'
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                        <span style={{ fontWeight: '600', color: '#ef4444' }}>⚠️ {incident.type || 'Alert'}</span>
-                        <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                          {new Date(incident.timestamp).toLocaleTimeString()}
-                        </span>
-                      </div>
-                      <p style={{ fontSize: '0.875rem', color: '#94a3b8' }}>
-                        {incident.description || 'Violence detected'}
-                      </p>
-                      {incident.confidence && (
-                        <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#64748b' }}>
-                          Confidence: {Math.round(incident.confidence * 100)}%
+      {/* 1. SIDEBAR NAVIGATION */}
+      <aside 
+        className={`${isSidebarCollapsed ? 'w-20' : 'w-72'} shrink-0 flex flex-col border-r border-white/5 bg-[#0a0c10]/80 backdrop-blur-xl transition-all duration-500 z-50 relative shadow-2xl`}
+      >
+        {/* Logo Area */}
+        <div className="h-20 flex items-center justify-center border-b border-white/5 relative overflow-hidden">
+             
+             <div 
+                className="relative z-10 flex items-center gap-3 cursor-pointer group"
+                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+             >
+                 <div className="size-10 bg-gradient-to-br from-brand-500 to-brand-700 rounded-lg flex items-center justify-center text-white shadow-[0_0_15px_rgba(59,130,246,0.4)] group-hover:shadow-[0_0_25px_rgba(59,130,246,0.6)] transition-all duration-300">
+                    <span className="material-symbols-outlined text-2xl">security</span>
+                 </div>
+                 {!isSidebarCollapsed && (
+                     <div className="animate-fade-in-right">
+                        <h1 className="font-bold text-white tracking-tight leading-none text-lg">SENTINEL<span className="text-brand-500">AI</span></h1>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="size-1.5 rounded-full bg-success-500 animate-pulse"></span>
+                            <span className="text-[10px] text-slate-400 uppercase tracking-widest font-mono">System Active</span>
                         </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
+                     </div>
+                 )}
+             </div>
         </div>
-      </div>
+
+        {/* Navigation Links */}
+        <nav className="flex-1 px-3 py-6 space-y-2">
+            <NavItem id="live" icon="videocam" label="Live Surveillance" />
+            <NavItem id="incidents" icon="history" label="Incident Logs" />
+            <NavItem id="analytics" icon="analytics" label="Intelligence" />
+            
+            <div className="my-6 border-t border-white/5 mx-2"></div>
+            
+            <NavItem id="settings" icon="settings" label="Configuration" />
+        </nav>
+
+        {/* User Profile / Footer */}
+        <div className="p-4 border-t border-white/5 bg-white/2">
+            <button className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start gap-3'} p-2 rounded-lg hover:bg-white/5 transition-all group`}>
+                <div className="size-8 rounded-full bg-gradient-to-tr from-slate-700 to-slate-600 border border-white/10 flex items-center justify-center shadow-lg">
+                    <span className="material-symbols-outlined text-sm text-slate-300">person</span>
+                </div>
+                {!isSidebarCollapsed && (
+                    <div className="text-left overflow-hidden">
+                        <p className="text-sm font-bold text-slate-200">Admin Officer</p>
+                        <p className="text-xs text-slate-500">Security Level 5</p>
+                    </div>
+                )}
+            </button>
+        </div>
+      </aside>
+
+      {/* 2. MAIN CONTENT AREA */}
+      <main className="flex-1 flex flex-col relative overflow-hidden z-10">
+        
+        {/* Top Header Bar */}
+        <header className="h-16 shrink-0 border-b border-white/5 bg-[#0a0c10]/50 backdrop-blur-md flex items-center justify-between px-8 z-40">
+            {/* Breadcrumb / Title */}
+            <div className="flex-1">
+                 <h2 className="text-xl font-medium text-white tracking-wide flex items-center gap-3">
+                    <span className="text-slate-500 font-normal">Console</span>
+                    <span className="material-symbols-outlined text-slate-600 text-sm">arrow_forward_ios</span>
+                    <span className="font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">
+                        {activeView === 'live' && 'Live Surveillance Monitor'}
+                        {activeView === 'incidents' && 'Incident History Log'}
+                        {activeView === 'analytics' && 'Intelligence Dashboard'}
+                    </span>
+                 </h2>
+            </div>
+            
+            {/* Status Modules */}
+            <div className="flex items-center gap-6">
+                {/* Weather / Env Mock */}
+                <div className="hidden lg:flex items-center gap-2 text-xs font-mono text-slate-400 bg-white/5 px-3 py-1.5 rounded-full border border-white/5">
+                    <span className="material-symbols-outlined text-sm">cloud</span>
+                    <span>24°C • CLOUDY</span>
+                </div>
+
+                {/* Connection Status */}
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/40 border border-white/5 backdrop-blur-md">
+                    <div className={`size-2 rounded-full ${wsRef.current?.readyState === 1 ? 'bg-success-500 shadow-[0_0_10px_#22c55e]' : 'bg-red-500'} transition-all duration-500`}></div>
+                    <span className="text-xs font-mono font-bold tracking-wider text-slate-300">
+                        {wsRef.current?.readyState === 1 ? 'NETWORK SECURE' : 'OFFLINE'}
+                    </span>
+                </div>
+
+                {/* Clock */}
+                <div className="text-right">
+                    <p className="text-lg font-bold text-white leading-none font-mono tracking-widest">{new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                    <p className="text-[10px] text-brand-500 uppercase tracking-[0.2em] font-bold">System Time</p>
+                </div>
+            </div>
+        </header>
+
+        {/* Content Viewport */}
+        <div className="flex-1 overflow-hidden relative p-6">
+             {activeView === 'live' && (
+                <LiveMonitor 
+                    videoRef={videoRef}
+                    startCamera={startCamera} 
+                    isActive={isCameraActive}
+                    incidents={incidents}
+                />
+             )}
+             {activeView === 'incidents' && <IncidentHistory incidents={incidents} />}
+             {activeView === 'analytics' && <AnalyticsDashboard incidents={incidents} />}
+        </div>
+
+      </main>
     </div>
   );
-}
+};
+
+export default Dashboard;
